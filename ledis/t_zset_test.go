@@ -391,7 +391,7 @@ func TestZScan(t *testing.T) {
 		}
 	}
 
-	if v, err := db.ZScan(nil, 3000, true, ""); err != nil {
+	if v, err := db.Scan(ZSET, nil, 3000, true, ""); err != nil {
 		t.Fatal(err.Error())
 	} else if len(v) != 2000 {
 		t.Fatal("invalid value ", len(v))
@@ -403,7 +403,7 @@ func TestZScan(t *testing.T) {
 		t.Fatal("invalid value ", n)
 	}
 
-	if v, err := db.ZScan(nil, 3000, true, ""); err != nil {
+	if v, err := db.Scan(ZSET, nil, 3000, true, ""); err != nil {
 		t.Fatal(err.Error())
 	} else if len(v) != 0 {
 		t.Fatal("invalid value length ", len(v))
@@ -464,4 +464,22 @@ func TestZLex(t *testing.T) {
 		t.Fatal(n)
 	}
 
+}
+
+func TestZKeyExists(t *testing.T) {
+	db := getTestDB()
+	key := []byte("zkeyexists_test")
+	if n, err := db.ZKeyExists(key); err != nil {
+		t.Fatal(err.Error())
+	} else if n != 0 {
+		t.Fatal("invalid value ", n)
+	}
+
+	db.ZAdd(key, ScorePair{0, []byte("a")}, ScorePair{0, []byte("b")})
+
+	if n, err := db.ZKeyExists(key); err != nil {
+		t.Fatal(err.Error())
+	} else if n != 1 {
+		t.Fatal("invalid value ", n)
+	}
 }

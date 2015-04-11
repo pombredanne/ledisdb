@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 )
 
@@ -21,10 +22,11 @@ var dbName = flag.String("db_name", "", "select a db to use, it will overwrite t
 var usePprof = flag.Bool("pprof", false, "enable pprof")
 var pprofPort = flag.Int("pprof_port", 6060, "pprof http port")
 var slaveof = flag.String("slaveof", "", "make the server a slave of another instance")
-var readonly = flag.Bool("readonly", false, "set readonly mode, salve server is always readonly")
+var readonly = flag.Bool("readonly", false, "set readonly mode, slave server is always readonly")
 var rpl = flag.Bool("rpl", false, "enable replication or not, slave server is always enabled")
 var rplSync = flag.Bool("rpl_sync", false, "enable sync replication or not")
 var ttlCheck = flag.Int("ttl_check", 0, "TTL check interval")
+var databases = flag.Int("databases", 0, "ledisdb maximum database number")
 
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
@@ -58,14 +60,27 @@ func main() {
 		cfg.DBName = *dbName
 	}
 
+	if *databases > 0 {
+		cfg.Databases = *databases
+	}
+
+	// check bool flag, use it.
+	for _, arg := range os.Args {
+		arg := strings.ToLower(arg)
+		switch arg {
+		case "-rpl", "-rpl=true", "-rpl=false":
+			cfg.UseReplication = *rpl
+		case "-readonly", "-readonly=true", "-readonly=false":
+			cfg.Readonly = *readonly
+		case "-rpl_sync", "-rpl_sync=true", "-rpl_sync=false":
+			cfg.Replication.Sync = *rplSync
+		}
+	}
+
 	if len(*slaveof) > 0 {
 		cfg.SlaveOf = *slaveof
 		cfg.Readonly = true
 		cfg.UseReplication = true
-	} else {
-		cfg.Readonly = *readonly
-		cfg.UseReplication = *rpl
-		cfg.Replication.Sync = *rplSync
 	}
 
 	if *ttlCheck > 0 {

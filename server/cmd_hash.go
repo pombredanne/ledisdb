@@ -292,12 +292,17 @@ func hpersistCommand(c *client) error {
 	return nil
 }
 
-func hxscanCommand(c *client) error {
-	return xscanGeneric(c, c.db.HScan)
-}
-
-func hxrevscanCommand(c *client) error {
-	return xscanGeneric(c, c.db.HRevScan)
+func hkeyexistsCommand(c *client) error {
+	args := c.args
+	if len(args) != 1 {
+		return ErrCmdParams
+	}
+	if n, err := c.db.HKeyExists(args[0]); err != nil {
+		return err
+	} else {
+		c.resp.writeInteger(n)
+	}
+	return nil
 }
 
 func init() {
@@ -321,6 +326,5 @@ func init() {
 	register("hexpireat", hexpireAtCommand)
 	register("httl", httlCommand)
 	register("hpersist", hpersistCommand)
-	register("hxscan", hxscanCommand)
-	register("hxrevscan", hxrevscanCommand)
+	register("hkeyexists", hkeyexistsCommand)
 }

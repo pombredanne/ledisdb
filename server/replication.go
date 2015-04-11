@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"github.com/siddontang/go/log"
 	"github.com/siddontang/go/num"
-	goledis "github.com/siddontang/ledisdb/client/go/ledis"
+	"github.com/siddontang/go/sync2"
+	"github.com/siddontang/goredis"
 	"github.com/siddontang/ledisdb/ledis"
 	"github.com/siddontang/ledisdb/rpl"
 	"net"
@@ -22,10 +23,33 @@ var (
 	errReplClosed    = errors.New("replication is closed")
 )
 
+const (
+	// slave needs to connect to its master
+	replConnectState int32 = iota + 1
+	// slave-master connection is in progress
+	replConnectingState
+	// perform the synchronization
+	replSyncState
+	// slave is online
+	replConnectedState
+)
+
+type syncBuffer struct {
+	m *master
+	bytes.Buffer
+}
+
+func (b *syncBuffer) Write(data []byte) (int, error) {
+	b.m.state.Set(replSyncState)
+	n, err := b.Buffer.Write(data)
+	return n, err
+}
+
 type master struct {
 	sync.Mutex
 
-	conn *goledis.Conn
+	connLock sync.Mutex
+	conn     *goredis.Conn
 
 	app *App
 
@@ -35,7 +59,9 @@ type master struct {
 
 	wg sync.WaitGroup
 
-	syncBuf bytes.Buffer
+	syncBuf syncBuffer
+
+	state sync2.AtomicInt32
 }
 
 func newMaster(app *App) *master {
@@ -43,44 +69,53 @@ func newMaster(app *App) *master {
 	m.app = app
 
 	m.quit = make(chan struct{}, 1)
+	m.syncBuf = syncBuffer{m: m}
+
+	m.state.Set(replConnectState)
 
 	return m
 }
 
 func (m *master) Close() {
-	m.quit <- struct{}{}
+	m.state.Set(replConnectState)
+
+	if !m.isQuited() {
+		close(m.quit)
+	}
 
 	m.closeConn()
 
 	m.wg.Wait()
-
-	select {
-	case <-m.quit:
-	default:
-	}
-}
-
-func (m *master) resetConn() error {
-	if len(m.addr) == 0 {
-		return fmt.Errorf("no assign master addr")
-	}
-
-	if m.conn != nil {
-		m.conn.Close()
-	}
-
-	m.conn = goledis.NewConn(m.addr)
-
-	return nil
 }
 
 func (m *master) closeConn() {
+	m.connLock.Lock()
+	defer m.connLock.Unlock()
+
 	if m.conn != nil {
 		//for replication, we send quit command to close gracefully
-		m.conn.Send("quit")
+		m.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 
 		m.conn.Close()
 	}
+
+	m.conn = nil
+}
+
+func (m *master) checkConn() error {
+	m.connLock.Lock()
+	defer m.connLock.Unlock()
+
+	var err error
+	if m.conn == nil {
+		m.conn, err = goredis.Connect(m.addr)
+	} else {
+		if _, err = m.conn.Do("PING"); err != nil {
+			m.conn.Close()
+			m.conn = nil
+		}
+	}
+	return err
 }
 
 func (m *master) stopReplication() error {
@@ -97,52 +132,88 @@ func (m *master) startReplication(masterAddr string, restart bool) error {
 
 	m.app.cfg.SetReadonly(true)
 
+	m.quit = make(chan struct{}, 1)
+
+	if len(m.addr) == 0 {
+		return fmt.Errorf("no assign master addr")
+	}
+
 	m.wg.Add(1)
 	go m.runReplication(restart)
 	return nil
 }
 
-func (m *master) runReplication(restart bool) {
-	defer m.wg.Done()
-
-	if err := m.resetConn(); err != nil {
-		log.Error("reset conn error %s", err.Error())
-		return
+func (m *master) isQuited() bool {
+	select {
+	case <-m.quit:
+		return true
+	default:
+		return false
 	}
+}
+
+func (m *master) runReplication(restart bool) {
+	defer func() {
+		m.state.Set(replConnectState)
+		m.wg.Done()
+	}()
 
 	for {
-		select {
-		case <-m.quit:
+		m.state.Set(replConnectState)
+
+		if m.isQuited() {
 			return
-		default:
-			if _, err := m.conn.Do("ping"); err != nil {
-				log.Error("ping master %s error %s, try 2s later", m.addr, err.Error())
-				time.Sleep(2 * time.Second)
-				continue
-			}
 		}
 
-		if err := m.replConf(); err != nil {
-			log.Error("replconf error %s", err.Error())
+		if err := m.checkConn(); err != nil {
+			log.Errorf("check master %s connection error %s, try 3s later", m.addr, err.Error())
+
+			select {
+			case <-time.After(3 * time.Second):
+			case <-m.quit:
+				return
+			}
+			continue
+		}
+
+		if m.isQuited() {
 			return
+		}
+
+		m.state.Set(replConnectedState)
+
+		if err := m.replConf(); err != nil {
+			if strings.Contains(err.Error(), ledis.ErrRplNotSupport.Error()) {
+				log.Fatalf("master doesn't support replication, wait 10s and retry")
+				select {
+				case <-time.After(10 * time.Second):
+				case <-m.quit:
+					return
+				}
+			} else {
+				log.Errorf("replconf error %s", err.Error())
+			}
+
+			continue
 		}
 
 		if restart {
 			if err := m.fullSync(); err != nil {
-				log.Error("restart fullsync error %s", err.Error())
-				return
+				log.Errorf("restart fullsync error %s", err.Error())
+				continue
 			}
+			m.state.Set(replConnectedState)
 		}
 
 		for {
-			select {
-			case <-m.quit:
+			if err := m.sync(); err != nil {
+				log.Errorf("sync error %s", err.Error())
+				break
+			}
+			m.state.Set(replConnectedState)
+
+			if m.isQuited() {
 				return
-			default:
-				if err := m.sync(); err != nil {
-					log.Error("sync error %s", err.Error())
-					return
-				}
 			}
 		}
 	}
@@ -156,7 +227,7 @@ func (m *master) replConf() error {
 		return err
 	}
 
-	if s, err := goledis.String(m.conn.Do("replconf", "listening-port", port)); err != nil {
+	if s, err := goredis.String(m.conn.Do("replconf", "listening-port", port)); err != nil {
 		return err
 	} else if strings.ToUpper(s) != "OK" {
 		return fmt.Errorf("not ok but %s", s)
@@ -172,6 +243,8 @@ func (m *master) fullSync() error {
 		return err
 	}
 
+	m.state.Set(replSyncState)
+
 	dumpPath := path.Join(m.app.cfg.DataDir, "master.dump")
 	f, err := os.OpenFile(dumpPath, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -183,12 +256,12 @@ func (m *master) fullSync() error {
 	err = m.conn.ReceiveBulkTo(f)
 	f.Close()
 	if err != nil {
-		log.Error("read dump data error %s", err.Error())
+		log.Errorf("read dump data error %s", err.Error())
 		return err
 	}
 
 	if _, err = m.app.ldb.LoadDumpFile(dumpPath); err != nil {
-		log.Error("load dump file error %s", err.Error())
+		log.Errorf("load dump file error %s", err.Error())
 		return err
 	}
 
@@ -219,19 +292,19 @@ func (m *master) sync() error {
 		return err
 	}
 
+	m.state.Set(replConnectedState)
+
 	m.syncBuf.Reset()
 
 	if err = m.conn.ReceiveBulkTo(&m.syncBuf); err != nil {
-		switch err.Error() {
-		case ledis.ErrLogMissed.Error():
+		if strings.Contains(err.Error(), ledis.ErrLogMissed.Error()) {
 			return m.fullSync()
-		case ledis.ErrRplNotSupport.Error():
-			m.stopReplication()
-			return nil
-		default:
+		} else {
 			return err
 		}
 	}
+
+	m.state.Set(replConnectedState)
 
 	buf := m.syncBuf.Bytes()
 
@@ -275,6 +348,7 @@ func (app *App) slaveof(masterAddr string, restart bool, readonly bool) error {
 	app.cfg.SlaveOf = masterAddr
 
 	if len(masterAddr) == 0 {
+		log.Infof("slaveof no one, stop replication")
 		if err := app.m.stopReplication(); err != nil {
 			return err
 		}
@@ -319,10 +393,8 @@ func (app *App) removeSlave(c *client, activeQuit bool) {
 
 	if _, ok := app.slaves[addr]; ok {
 		delete(app.slaves, addr)
-		log.Info("remove slave %s", addr)
-		if activeQuit {
-			asyncNotifyUint64(app.slaveSyncAck, c.lastLogID.Get())
-		}
+		log.Infof("remove slave %s", addr)
+		asyncNotifyUint64(app.slaveSyncAck, c.lastLogID.Get())
 	}
 }
 
@@ -372,7 +444,7 @@ func (app *App) publishNewLog(l *rpl.Log) {
 			//slave has already owned this log
 			n++
 		} else if lastLogID > logId {
-			log.Error("invalid slave %s, lastlogid %d > %d", s.slaveListeningAddr, lastLogID, logId)
+			log.Errorf("invalid slave %s, lastlogid %d > %d", s.slaveListeningAddr, lastLogID, logId)
 		}
 	}
 
@@ -390,7 +462,7 @@ func (app *App) publishNewLog(l *rpl.Log) {
 		for i := 0; i < slaveNum; i++ {
 			id := <-app.slaveSyncAck
 			if id < logId {
-				log.Info("some slave may close with last logid %d < %d", id, logId)
+				log.Infof("some slave may close with last logid %d < %d", id, logId)
 			} else {
 				n++
 				if n >= total {

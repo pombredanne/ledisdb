@@ -31,19 +31,26 @@ func selectCommand(c *client) error {
 	if index, err := strconv.Atoi(hack.String(c.args[0])); err != nil {
 		return err
 	} else {
-		if c.db.IsInMulti() {
-			if err := c.script.Select(index); err != nil {
-				return err
-			} else {
-				c.db = c.script.DB
-			}
+		// if c.db.IsInMulti() {
+		// 	if err := c.script.Select(index); err != nil {
+		// 		return err
+		// 	} else {
+		// 		c.db = c.script.DB
+		// 	}
+		// } else {
+		// 	if db, err := c.ldb.Select(index); err != nil {
+		// 		return err
+		// 	} else {
+		// 		c.db = db
+		// 	}
+		// }
+
+		if db, err := c.ldb.Select(index); err != nil {
+			return err
 		} else {
-			if db, err := c.ldb.Select(index); err != nil {
-				return err
-			} else {
-				c.db = db
-			}
+			c.db = db
 		}
+
 		c.resp.writeStatus(OK)
 	}
 
@@ -111,6 +118,23 @@ func timeCommand(c *client) error {
 	return nil
 }
 
+func configGetCommand(c *client) error {
+	args := c.args
+	if len(args) != 2 {
+		return ErrCmdParams
+	}
+
+	ay := make([][]byte, 0, 2)
+	key := hack.String(args[1])
+	switch key {
+	case "databases":
+		ay = append(ay, []byte("databases"), num.FormatIntToSlice(c.app.cfg.Databases))
+	}
+
+	c.resp.writeSliceArray(ay)
+	return nil
+}
+
 func configCommand(c *client) error {
 	if len(c.args) < 1 {
 		return ErrCmdParams
@@ -124,6 +148,8 @@ func configCommand(c *client) error {
 			c.resp.writeStatus(OK)
 			return nil
 		}
+	case "get":
+		return configGetCommand(c)
 	default:
 		return ErrCmdParams
 	}

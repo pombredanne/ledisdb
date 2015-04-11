@@ -31,29 +31,41 @@ func checkHashKFSize(key []byte, field []byte) error {
 }
 
 func (db *DB) hEncodeSizeKey(key []byte) []byte {
-	buf := make([]byte, len(key)+2)
+	buf := make([]byte, len(key)+1+len(db.indexVarBuf))
 
-	buf[0] = db.index
-	buf[1] = HSizeType
+	pos := 0
+	n := copy(buf, db.indexVarBuf)
 
-	copy(buf[2:], key)
+	pos += n
+	buf[pos] = HSizeType
+
+	pos++
+	copy(buf[pos:], key)
+
 	return buf
 }
 
 func (db *DB) hDecodeSizeKey(ek []byte) ([]byte, error) {
-	if len(ek) < 2 || ek[0] != db.index || ek[1] != HSizeType {
-		return nil, errHSizeKey
+	pos, err := db.checkKeyIndex(ek)
+	if err != nil {
+		return nil, err
 	}
 
-	return ek[2:], nil
+	if pos+1 > len(ek) || ek[pos] != HSizeType {
+		return nil, errHSizeKey
+	}
+	pos++
+
+	return ek[pos:], nil
 }
 
 func (db *DB) hEncodeHashKey(key []byte, field []byte) []byte {
-	buf := make([]byte, len(key)+len(field)+1+1+2+1)
+	buf := make([]byte, len(key)+len(field)+1+1+2+len(db.indexVarBuf))
 
 	pos := 0
-	buf[pos] = db.index
-	pos++
+	n := copy(buf, db.indexVarBuf)
+	pos += n
+
 	buf[pos] = HashType
 	pos++
 
@@ -71,15 +83,24 @@ func (db *DB) hEncodeHashKey(key []byte, field []byte) []byte {
 }
 
 func (db *DB) hDecodeHashKey(ek []byte) ([]byte, []byte, error) {
-	if len(ek) < 5 || ek[0] != db.index || ek[1] != HashType {
+	pos, err := db.checkKeyIndex(ek)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if pos+1 > len(ek) || ek[pos] != HashType {
+		return nil, nil, errHashKey
+	}
+	pos++
+
+	if pos+2 > len(ek) {
 		return nil, nil, errHashKey
 	}
 
-	pos := 2
 	keyLen := int(binary.BigEndian.Uint16(ek[pos:]))
 	pos += 2
 
-	if keyLen+5 > len(ek) {
+	if keyLen+pos > len(ek) {
 		return nil, nil, errHashKey
 	}
 
@@ -354,6 +375,8 @@ func (db *DB) HGetAll(key []byte) ([]FVPair, error) {
 	v := make([]FVPair, 0, 16)
 
 	it := db.bucket.RangeLimitIterator(start, stop, store.RangeROpen, 0, -1)
+	defer it.Close()
+
 	for ; it.Valid(); it.Next() {
 		_, f, err := db.hDecodeHashKey(it.Key())
 		if err != nil {
@@ -362,8 +385,6 @@ func (db *DB) HGetAll(key []byte) ([]FVPair, error) {
 
 		v = append(v, FVPair{Field: f, Value: it.Value()})
 	}
-
-	it.Close()
 
 	return v, nil
 }
@@ -379,6 +400,8 @@ func (db *DB) HKeys(key []byte) ([][]byte, error) {
 	v := make([][]byte, 0, 16)
 
 	it := db.bucket.RangeLimitIterator(start, stop, store.RangeROpen, 0, -1)
+	defer it.Close()
+
 	for ; it.Valid(); it.Next() {
 		_, f, err := db.hDecodeHashKey(it.Key())
 		if err != nil {
@@ -386,8 +409,6 @@ func (db *DB) HKeys(key []byte) ([][]byte, error) {
 		}
 		v = append(v, f)
 	}
-
-	it.Close()
 
 	return v, nil
 }
@@ -403,6 +424,8 @@ func (db *DB) HValues(key []byte) ([][]byte, error) {
 	v := make([][]byte, 0, 16)
 
 	it := db.bucket.RangeLimitIterator(start, stop, store.RangeROpen, 0, -1)
+	defer it.Close()
+
 	for ; it.Valid(); it.Next() {
 		_, _, err := db.hDecodeHashKey(it.Key())
 		if err != nil {
@@ -411,8 +434,6 @@ func (db *DB) HValues(key []byte) ([][]byte, error) {
 
 		v = append(v, it.Value())
 	}
-
-	it.Close()
 
 	return v, nil
 }
@@ -460,14 +481,6 @@ func (db *DB) hFlush() (drop int64, err error) {
 	return db.flushType(t, HashType)
 }
 
-func (db *DB) HScan(key []byte, count int, inclusive bool, match string) ([][]byte, error) {
-	return db.scan(HSizeType, key, count, inclusive, match)
-}
-
-func (db *DB) HRevScan(key []byte, count int, inclusive bool, match string) ([][]byte, error) {
-	return db.revscan(HSizeType, key, count, inclusive, match)
-}
-
 func (db *DB) HExpire(key []byte, duration int64) (int64, error) {
 	if duration <= 0 {
 		return 0, errExpireValue
@@ -508,4 +521,16 @@ func (db *DB) HPersist(key []byte) (int64, error) {
 
 	err = t.Commit()
 	return n, err
+}
+
+func (db *DB) HKeyExists(key []byte) (int64, error) {
+	if err := checkKeySize(key); err != nil {
+		return 0, err
+	}
+	sk := db.hEncodeSizeKey(key)
+	v, err := db.bucket.Get(sk)
+	if v != nil && err == nil {
+		return 1, nil
+	}
+	return 0, err
 }

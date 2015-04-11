@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"github.com/siddontang/ledisdb/ledis"
 )
 
 var (
@@ -26,12 +27,19 @@ var (
 )
 
 const (
-	KV = iota
-	LIST
-	HASH
-	SET
-	ZSET
-	BIT
+	KV   ledis.DataType = ledis.KV
+	LIST                = ledis.LIST
+	HASH                = ledis.HASH
+	SET                 = ledis.SET
+	ZSET                = ledis.ZSET
+)
+
+const (
+	KVName   = ledis.KVName
+	ListName = ledis.ListName
+	HashName = ledis.HashName
+	SetName  = ledis.SetName
+	ZSetName = ledis.ZSetName
 )
 
 const (
@@ -39,3 +47,5 @@ const (
 	MB uint64 = 1024 * 1024
 	KB uint64 = 1024
 )
+
+var TypeNames = []string{KVName, ListName, HashName, SetName, ZSetName}

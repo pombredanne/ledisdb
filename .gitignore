@@ -4,5 +4,5 @@ build
 nohup.out
 build_config.mk
 var*
-_workspace
 *.log
+bin

@@ -1,7 +1,7 @@
 package server
 
 import (
-	"github.com/siddontang/ledisdb/client/go/ledis"
+	"github.com/siddontang/goredis"
 	"github.com/siddontang/ledisdb/config"
 	"os"
 	"sync"
@@ -11,18 +11,17 @@ import (
 var testAppOnce sync.Once
 var testApp *App
 
-var testLedisClient *ledis.Client
+var testLedisClient *goredis.Client
 
 func newTestLedisClient() {
-	cfg := new(ledis.Config)
-	cfg.Addr = "127.0.0.1:16380"
-	cfg.MaxIdleConns = 4
-	testLedisClient = ledis.NewClient(cfg)
+	testLedisClient = goredis.NewClient("127.0.0.1:16380", "")
+	testLedisClient.SetMaxIdleConns(4)
 }
 
-func getTestConn() *ledis.Conn {
+func getTestConn() *goredis.PoolConn {
 	startTestApp()
-	return testLedisClient.Get()
+	conn, _ := testLedisClient.Get()
+	return conn
 }
 
 func startTestApp() {
@@ -34,6 +33,7 @@ func startTestApp() {
 		os.RemoveAll(cfg.DataDir)
 
 		cfg.Addr = "127.0.0.1:16380"
+		cfg.HttpAddr = "127.0.0.1:21181"
 
 		os.RemoveAll("/tmp/testdb")
 

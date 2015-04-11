@@ -14,7 +14,7 @@ type batch struct {
 
 	sync.Locker
 
-	tx *Tx
+	//	tx *Tx
 }
 
 func (b *batch) Commit() error {
@@ -22,16 +22,18 @@ func (b *batch) Commit() error {
 		return ErrWriteInROnly
 	}
 
-	if b.tx == nil {
-		return b.l.handleCommit(b.WriteBatch, b.WriteBatch)
-	} else {
-		if b.l.r != nil {
-			if err := b.tx.data.Append(b.WriteBatch.BatchData()); err != nil {
-				return err
-			}
-		}
-		return b.WriteBatch.Commit()
-	}
+	return b.l.handleCommit(b.WriteBatch, b.WriteBatch)
+
+	// if b.tx == nil {
+	// 	return b.l.handleCommit(b.WriteBatch, b.WriteBatch)
+	// } else {
+	// 	if b.l.r != nil {
+	// 		if err := b.tx.data.Append(b.WriteBatch.BatchData()); err != nil {
+	// 			return err
+	// 		}
+	// 	}
+	// 	return b.WriteBatch.Commit()
+	// }
 }
 
 func (b *batch) Lock() {
@@ -66,26 +68,24 @@ func (l *dbBatchLocker) Unlock() {
 	l.wrLock.RUnlock()
 }
 
-type txBatchLocker struct {
-}
+// type txBatchLocker struct {
+// }
 
-func (l *txBatchLocker) Lock()   {}
-func (l *txBatchLocker) Unlock() {}
+// func (l *txBatchLocker) Lock()   {}
+// func (l *txBatchLocker) Unlock() {}
 
-type multiBatchLocker struct {
-}
+// type multiBatchLocker struct {
+// }
 
-func (l *multiBatchLocker) Lock()   {}
-func (l *multiBatchLocker) Unlock() {}
+// func (l *multiBatchLocker) Lock()   {}
+// func (l *multiBatchLocker) Unlock() {}
 
-func (l *Ledis) newBatch(wb *store.WriteBatch, locker sync.Locker, tx *Tx) *batch {
+func (l *Ledis) newBatch(wb *store.WriteBatch, locker sync.Locker) *batch {
 	b := new(batch)
 	b.l = l
 	b.WriteBatch = wb
 
 	b.Locker = locker
-
-	b.tx = tx
 
 	return b
 }
@@ -107,7 +107,7 @@ func (l *Ledis) handleCommit(g commitDataGetter, c commiter) error {
 		if rl, err = l.r.Log(g.Data()); err != nil {
 			l.commitLock.Unlock()
 
-			log.Fatal("write wal error %s", err.Error())
+			log.Fatalf("write wal error %s", err.Error())
 			return err
 		}
 
@@ -116,7 +116,7 @@ func (l *Ledis) handleCommit(g commitDataGetter, c commiter) error {
 		if err = c.Commit(); err != nil {
 			l.commitLock.Unlock()
 
-			log.Fatal("commit error %s", err.Error())
+			log.Fatalf("commit error %s", err.Error())
 			l.noticeReplication()
 			return err
 		}
@@ -124,7 +124,7 @@ func (l *Ledis) handleCommit(g commitDataGetter, c commiter) error {
 		if err = l.r.UpdateCommitID(rl.ID); err != nil {
 			l.commitLock.Unlock()
 
-			log.Fatal("update commit id error %s", err.Error())
+			log.Fatalf("update commit id error %s", err.Error())
 			l.noticeReplication()
 			return err
 		}

@@ -641,14 +641,6 @@ func zinterstoreCommand(c *client) error {
 	return err
 }
 
-func zxscanCommand(c *client) error {
-	return xscanGeneric(c, c.db.ZScan)
-}
-
-func zxrevscanCommand(c *client) error {
-	return xscanGeneric(c, c.db.ZRevScan)
-}
-
 func zparseMemberRange(minBuf []byte, maxBuf []byte) (min []byte, max []byte, rangeType uint8, err error) {
 	rangeType = store.RangeClose
 	if strings.ToLower(hack.String(minBuf)) == "-" {
@@ -771,6 +763,19 @@ func zlexcountCommand(c *client) error {
 	return nil
 }
 
+func zkeyexistsCommand(c *client) error {
+	args := c.args
+	if len(args) != 1 {
+		return ErrCmdParams
+	}
+	if n, err := c.db.ZKeyExists(args[0]); err != nil {
+		return err
+	} else {
+		c.resp.writeInteger(n)
+	}
+	return nil
+}
+
 func init() {
 	register("zadd", zaddCommand)
 	register("zcard", zcardCommand)
@@ -802,6 +807,5 @@ func init() {
 	register("zexpireat", zexpireAtCommand)
 	register("zttl", zttlCommand)
 	register("zpersist", zpersistCommand)
-	register("zxscan", zxscanCommand)
-	register("zxrevscan", zxrevscanCommand)
+	register("zkeyexists", zkeyexistsCommand)
 }

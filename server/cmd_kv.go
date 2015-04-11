@@ -1,10 +1,8 @@
 package server
 
 import (
-	"github.com/siddontang/go/hack"
 	"github.com/siddontang/ledisdb/ledis"
 	"strconv"
-	"strings"
 )
 
 // func getCommand(c *client) error {
@@ -315,100 +313,232 @@ func persistCommand(c *client) error {
 	return nil
 }
 
-func parseScanArgs(c *client) (key []byte, match string, count int, err error) {
+func appendCommand(c *client) error {
 	args := c.args
-	count = 10
-
-	switch len(args) {
-	case 0:
-		key = nil
-		return
-	case 1, 3, 5:
-		key = args[0]
-		break
-	default:
-		err = ErrCmdParams
-		return
+	if len(args) != 2 {
+		return ErrCmdParams
 	}
 
-	if len(args) == 3 {
-		switch strings.ToLower(hack.String(args[1])) {
-		case "match":
-			match = hack.String(args[2])
-		case "count":
-			count, err = strconv.Atoi(hack.String(args[2]))
-		default:
-			err = ErrCmdParams
-			return
-		}
-	} else if len(args) == 5 {
-		if strings.ToLower(hack.String(args[1])) != "match" {
-			err = ErrCmdParams
-			return
-		} else if strings.ToLower(hack.String(args[3])) != "count" {
-			err = ErrCmdParams
-			return
-		}
-
-		match = hack.String(args[2])
-		count, err = strconv.Atoi(hack.String(args[4]))
-	}
-
-	if count <= 0 {
-		err = ErrCmdParams
-	}
-
-	return
-}
-
-func xscanGeneric(c *client,
-	f func(key []byte, count int, inclusive bool, match string) ([][]byte, error)) error {
-	key, match, count, err := parseScanArgs(c)
-	if err != nil {
-		return err
-	}
-
-	if ay, err := f(key, count, false, match); err != nil {
+	if n, err := c.db.Append(args[0], args[1]); err != nil {
 		return err
 	} else {
-		data := make([]interface{}, 2)
-		if len(ay) < count {
-			data[0] = []byte("")
-		} else {
-			data[0] = ay[len(ay)-1]
-		}
-		data[1] = ay
-		c.resp.writeArray(data)
+		c.resp.writeInteger(n)
 	}
 	return nil
 }
 
-func xscanCommand(c *client) error {
-	return xscanGeneric(c, c.db.Scan)
+func getrangeCommand(c *client) error {
+	args := c.args
+	if len(args) != 3 {
+		return ErrCmdParams
+	}
+
+	key := args[0]
+	start, err := strconv.Atoi(string(args[1]))
+	if err != nil {
+		return err
+	}
+
+	end, err := strconv.Atoi(string(args[2]))
+	if err != nil {
+		return err
+	}
+
+	if v, err := c.db.GetRange(key, start, end); err != nil {
+		return err
+	} else {
+		c.resp.writeBulk(v)
+	}
+
+	return nil
+
 }
 
-func xrevscanCommand(c *client) error {
-	return xscanGeneric(c, c.db.RevScan)
+func setrangeCommand(c *client) error {
+	args := c.args
+	if len(args) != 3 {
+		return ErrCmdParams
+	}
+
+	key := args[0]
+	offset, err := strconv.Atoi(string(args[1]))
+	if err != nil {
+		return err
+	}
+
+	value := args[2]
+
+	if n, err := c.db.SetRange(key, offset, value); err != nil {
+		return err
+	} else {
+		c.resp.writeInteger(n)
+	}
+	return nil
+}
+
+func strlenCommand(c *client) error {
+	if len(c.args) != 1 {
+		return ErrCmdParams
+	}
+
+	if n, err := c.db.StrLen(c.args[0]); err != nil {
+		return err
+	} else {
+		c.resp.writeInteger(n)
+	}
+	return nil
+}
+
+func parseBitRange(args [][]byte) (start int, end int, err error) {
+	start = 0
+	end = -1
+	if len(args) > 0 {
+		if start, err = strconv.Atoi(string(args[0])); err != nil {
+			return
+		}
+	}
+
+	if len(args) == 2 {
+		if end, err = strconv.Atoi(string(args[1])); err != nil {
+			return
+		}
+	}
+	return
+}
+
+func bitcountCommand(c *client) error {
+	args := c.args
+	if len(args) == 0 || len(args) > 3 {
+		return ErrCmdParams
+	}
+
+	key := args[0]
+	start, end, err := parseBitRange(args[1:])
+	if err != nil {
+		return err
+	}
+
+	if n, err := c.db.BitCount(key, start, end); err != nil {
+		return err
+	} else {
+		c.resp.writeInteger(n)
+	}
+	return nil
+}
+
+func bitopCommand(c *client) error {
+	args := c.args
+	if len(args) < 3 {
+		return ErrCmdParams
+	}
+
+	op := string(args[0])
+	destKey := args[1]
+	srcKeys := args[2:]
+
+	if n, err := c.db.BitOP(op, destKey, srcKeys...); err != nil {
+		return err
+	} else {
+		c.resp.writeInteger(n)
+	}
+
+	return nil
+}
+
+func bitposCommand(c *client) error {
+	args := c.args
+	if len(args) < 2 {
+		return ErrCmdParams
+	}
+
+	key := args[0]
+	bit, err := strconv.Atoi(string(args[1]))
+	if err != nil {
+		return err
+	}
+	start, end, err := parseBitRange(args[2:])
+	if err != nil {
+		return err
+	}
+
+	if n, err := c.db.BitPos(key, bit, start, end); err != nil {
+		return err
+	} else {
+		c.resp.writeInteger(n)
+	}
+	return nil
+}
+
+func getbitCommand(c *client) error {
+	args := c.args
+	if len(args) != 2 {
+		return ErrCmdParams
+	}
+
+	key := args[0]
+	offset, err := strconv.Atoi(string(args[1]))
+	if err != nil {
+		return err
+	}
+
+	if n, err := c.db.GetBit(key, offset); err != nil {
+		return err
+	} else {
+		c.resp.writeInteger(n)
+	}
+	return nil
+}
+
+func setbitCommand(c *client) error {
+	args := c.args
+	if len(args) != 3 {
+		return ErrCmdParams
+	}
+
+	key := args[0]
+	offset, err := strconv.Atoi(string(args[1]))
+	if err != nil {
+		return err
+	}
+
+	value, err := strconv.Atoi(string(args[2]))
+	if err != nil {
+		return err
+	}
+
+	if n, err := c.db.SetBit(key, offset, value); err != nil {
+		return err
+	} else {
+		c.resp.writeInteger(n)
+	}
+	return nil
 }
 
 func init() {
+	register("append", appendCommand)
+	register("bitcount", bitcountCommand)
+	register("bitop", bitopCommand)
+	register("bitpos", bitposCommand)
 	register("decr", decrCommand)
 	register("decrby", decrbyCommand)
 	register("del", delCommand)
 	register("exists", existsCommand)
 	register("get", getCommand)
+	register("getbit", getbitCommand)
+	register("getrange", getrangeCommand)
 	register("getset", getsetCommand)
 	register("incr", incrCommand)
 	register("incrby", incrbyCommand)
 	register("mget", mgetCommand)
 	register("mset", msetCommand)
 	register("set", setCommand)
+	register("setbit", setbitCommand)
 	register("setnx", setnxCommand)
 	register("setex", setexCommand)
+	register("setrange", setrangeCommand)
+	register("strlen", strlenCommand)
 	register("expire", expireCommand)
 	register("expireat", expireAtCommand)
 	register("ttl", ttlCommand)
 	register("persist", persistCommand)
-	register("xscan", xscanCommand)
-	register("xrevscan", xrevscanCommand)
 }

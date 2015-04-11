@@ -79,6 +79,29 @@ func TestHashPersist(t *testing.T) {
 		t.Fatal(n)
 	}
 }
+func TestHashKeyExists(t *testing.T) {
+	db := getTestDB()
+	key := []byte("hkeyexists_test")
+	v, err := db.HKeyExists(key)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	if v != 0 {
+		t.Fatal("invalid value ", v)
+	}
+
+	if _, err := db.HSet(key, []byte("hello"), []byte("world")); err != nil {
+		t.Fatal(err.Error())
+	}
+
+	v, err = db.HKeyExists(key)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	if v != 1 {
+		t.Fatal("invalid value ", v)
+	}
+}
 
 func TestHFlush(t *testing.T) {
 	db := getTestDB()
@@ -91,7 +114,7 @@ func TestHFlush(t *testing.T) {
 		}
 	}
 
-	if v, err := db.HScan(nil, 3000, true, ""); err != nil {
+	if v, err := db.Scan(HASH, nil, 3000, true, ""); err != nil {
 		t.Fatal(err.Error())
 	} else if len(v) != 2000 {
 		t.Fatal("invalid value ", len(v))
@@ -112,7 +135,7 @@ func TestHFlush(t *testing.T) {
 		t.Fatal("invalid value ", n)
 	}
 
-	if v, err := db.HScan(nil, 3000, true, ""); err != nil {
+	if v, err := db.Scan(HASH, nil, 3000, true, ""); err != nil {
 		t.Fatal(err.Error())
 	} else if len(v) != 0 {
 		t.Fatal("invalid value length ", len(v))

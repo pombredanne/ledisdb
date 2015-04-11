@@ -2,7 +2,7 @@
 
 [![Build Status](https://travis-ci.org/siddontang/ledisdb.svg?branch=develop)](https://travis-ci.org/siddontang/ledisdb)
 
-Ledisdb is a high-performance NoSQL database, similar to Redis, written in [Go](http://golang.org/). It supports many data structures including kv, list, hash, zset, bitmap,set.
+Ledisdb is a high-performance NoSQL database, similar to Redis, written in [Go](http://golang.org/). It supports many data structures including kv, list, hash, zset, set.
 
 LedisDB now supports multiple different databases as backends.
 
@@ -11,10 +11,9 @@ LedisDB now supports multiple different databases as backends.
 
 ## Features
 
-+ Rich data structure: KV, List, Hash, ZSet, Bitmap, Set.
++ Rich data structure: KV, List, Hash, ZSet, Set.
 + Data storage is not limited by RAM.
 + Various backends supported: LevelDB, goleveldb, LMDB, RocksDB, BoltDB, RAM.
-+ Supports transactions using LMDB or BotlDB.
 + Supports Lua scripting.
 + Supports expiration and TTL.
 + Can be managed via redis-cli.
@@ -34,8 +33,8 @@ Create a workspace and checkout ledisdb source
 
     cd src/github.com/siddontang/ledisdb
 
-    #install Go dependences
-    ./bootstrap.sh
+    #install godep and be sure godep command can be found in $PATH
+    go get github.com/tools/godep
 
     #set build and run environment 
     source dev.sh
@@ -45,7 +44,10 @@ Create a workspace and checkout ledisdb source
 
 ## Godep support
 
-LedisDB can be built with [godep](https://github.com/tools/godep) which can manage LedisDB Go dependency automatically.
+LedisDB now prefers using [godep](https://github.com/tools/godep) to build, godep can manage the go dependences easily.
+
+If you don't want to use godep, you can first run `sh bootstrap.sh` to download the depencenecs and then `make`, 
+but I will not guarantee the dependence compatibility.
 
 ## LevelDB support
 
@@ -173,7 +175,6 @@ See [Clients](https://github.com/siddontang/ledisdb/wiki/Clients) to find or con
 ## Caveat
 
 + Changing the backend database at runtime is very dangerous. Data validation is not guaranteed if this is done.
-+ Beginning a transaction will block any other write operators until `commit` or `rollback` is called. Avoid long-running transactions.
 + `pcall` and `xpcall` are not supported in Lua. See the README in [golua](https://github.com/aarzilli/golua).
 
 

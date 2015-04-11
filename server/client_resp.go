@@ -3,10 +3,11 @@ package server
 import (
 	"bufio"
 	"errors"
-	"github.com/siddontang/go/arena"
+	"fmt"
 	"github.com/siddontang/go/hack"
 	"github.com/siddontang/go/log"
 	"github.com/siddontang/go/num"
+	"github.com/siddontang/goredis"
 	"github.com/siddontang/ledisdb/ledis"
 	"io"
 	"net"
@@ -22,9 +23,8 @@ type respClient struct {
 	*client
 
 	conn net.Conn
-	rb   *bufio.Reader
 
-	ar *arena.Arena
+	respReader *goredis.RespReader
 
 	activeQuit bool
 }
@@ -75,13 +75,11 @@ func newClientRESP(conn net.Conn, app *App) {
 		tcpConn.SetWriteBuffer(app.cfg.ConnWriteBufferSize)
 	}
 
-	c.rb = bufio.NewReaderSize(conn, app.cfg.ConnReadBufferSize)
+	br := bufio.NewReaderSize(conn, app.cfg.ConnReadBufferSize)
+	c.respReader = goredis.NewRespReader(br)
 
 	c.resp = newWriterRESP(conn, app.cfg.ConnWriteBufferSize)
 	c.remoteAddr = conn.RemoteAddr().String()
-
-	//maybe another config?
-	c.ar = arena.NewArena(app.cfg.ConnReadBufferSize)
 
 	app.connWait.Add(1)
 
@@ -97,17 +95,17 @@ func (c *respClient) run() {
 			n := runtime.Stack(buf, false)
 			buf = buf[0:n]
 
-			log.Fatal("client run panic %s:%v", buf, e)
+			log.Fatalf("client run panic %s:%v", buf, e)
 		}
 
 		c.client.close()
 
 		c.conn.Close()
 
-		if c.tx != nil {
-			c.tx.Rollback()
-			c.tx = nil
-		}
+		// if c.tx != nil {
+		// 	c.tx.Rollback()
+		// 	c.tx = nil
+		// }
 
 		c.app.removeSlave(c.client, c.activeQuit)
 
@@ -130,7 +128,10 @@ func (c *respClient) run() {
 			c.conn.SetReadDeadline(time.Now().Add(kc))
 		}
 
-		reqData, err := c.readRequest()
+		c.cmd = ""
+		c.args = nil
+
+		reqData, err := c.respReader.ParseRequest()
 		if err == nil {
 			err = c.handleRequest(reqData)
 		}
@@ -141,10 +142,6 @@ func (c *respClient) run() {
 	}
 }
 
-func (c *respClient) readRequest() ([][]byte, error) {
-	return ReadRequest(c.rb, c.ar)
-}
-
 func (c *respClient) handleRequest(reqData [][]byte) error {
 	if len(reqData) == 0 {
 		c.cmd = ""
@@ -153,6 +150,16 @@ func (c *respClient) handleRequest(reqData [][]byte) error {
 		c.cmd = hack.String(lowerSlice(reqData[0]))
 		c.args = reqData[1:]
 	}
+
+	if c.cmd == "xselect" {
+		err := c.handleXSelectCmd()
+		if err != nil {
+			c.resp.writeError(err)
+			c.resp.flush()
+			return nil
+		}
+	}
+
 	if c.cmd == "quit" {
 		c.activeQuit = true
 		c.resp.writeStatus(OK)
@@ -163,10 +170,35 @@ func (c *respClient) handleRequest(reqData [][]byte) error {
 
 	c.perform()
 
-	c.cmd = ""
-	c.args = nil
+	return nil
+}
 
-	c.ar.Reset()
+// XSELECT db THEN command
+func (c *respClient) handleXSelectCmd() error {
+	if len(c.args) <= 2 {
+		// invalid command format
+		return fmt.Errorf("invalid format for XSELECT, must XSELECT db THEN your command")
+	}
+
+	if hack.String(upperSlice(c.args[1])) != "THEN" {
+		// invalid command format, just resturn here
+		return fmt.Errorf("invalid format for XSELECT, must XSELECT db THEN your command")
+	}
+
+	index, err := strconv.Atoi(hack.String(c.args[0]))
+	if err != nil {
+		return fmt.Errorf("invalid db for XSELECT, err %v", err)
+	}
+
+	db, err := c.app.ldb.Select(index)
+	if err != nil {
+		return fmt.Errorf("invalid db for XSELECT, err %v", err)
+	}
+
+	c.db = db
+
+	c.cmd = hack.String(lowerSlice(c.args[2]))
+	c.args = c.args[3:]
 
 	return nil
 }
@@ -180,7 +212,7 @@ func newWriterRESP(conn net.Conn, size int) *respWriter {
 }
 
 func (w *respWriter) writeError(err error) {
-	w.buff.Write(hack.Slice("-ERR"))
+	w.buff.Write(hack.Slice("-"))
 	if err != nil {
 		w.buff.WriteByte(' ')
 		w.buff.Write(hack.Slice(err.Error()))
@@ -235,7 +267,7 @@ func (w *respWriter) writeArray(lst []interface{}) {
 			case int64:
 				w.writeInteger(v)
 			default:
-				panic("invalid array type")
+				panic(fmt.Sprintf("invalid array type %T %v", lst[i], v))
 			}
 		}
 	}

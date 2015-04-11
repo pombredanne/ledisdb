@@ -18,7 +18,11 @@ func formatEventKey(buf []byte, k []byte) ([]byte, error) {
 	buf = append(buf, fmt.Sprintf("%s ", TypeName[k[1]])...)
 
 	db := new(DB)
-	db.index = k[0]
+	index, _, err := decodeDBIndex(k)
+	if err != nil {
+		return nil, err
+	}
+	db.setIndex(index)
 
 	//to do format at respective place
 
@@ -81,20 +85,20 @@ func formatEventKey(buf []byte, k []byte) ([]byte, error) {
 			buf = append(buf, ' ')
 			buf = strconv.AppendInt(buf, score, 10)
 		}
-	case BitType:
-		if key, seq, err := db.bDecodeBinKey(k); err != nil {
-			return nil, err
-		} else {
-			buf = strconv.AppendQuote(buf, hack.String(key))
-			buf = append(buf, ' ')
-			buf = strconv.AppendUint(buf, uint64(seq), 10)
-		}
-	case BitMetaType:
-		if key, err := db.bDecodeMetaKey(k); err != nil {
-			return nil, err
-		} else {
-			buf = strconv.AppendQuote(buf, hack.String(key))
-		}
+	// case BitType:
+	// 	if key, seq, err := db.bDecodeBinKey(k); err != nil {
+	// 		return nil, err
+	// 	} else {
+	// 		buf = strconv.AppendQuote(buf, hack.String(key))
+	// 		buf = append(buf, ' ')
+	// 		buf = strconv.AppendUint(buf, uint64(seq), 10)
+	// 	}
+	// case BitMetaType:
+	// 	if key, err := db.bDecodeMetaKey(k); err != nil {
+	// 		return nil, err
+	// 	} else {
+	// 		buf = strconv.AppendQuote(buf, hack.String(key))
+	// 	}
 	case SetType:
 		if key, member, err := db.sDecodeSetKey(k); err != nil {
 			return nil, err

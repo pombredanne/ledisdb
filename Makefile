@@ -14,13 +14,31 @@ export GO_BUILD_TAGS
 all: build  
 
 build:
-	$(GO) install -tags '$(GO_BUILD_TAGS)' ./...
+	$(GO) install -tags 'linenoise $(GO_BUILD_TAGS)' ./...
+
+build_lmdb:
+	$(GO) install -tags 'linenoise $(GO_BUILD_TAGS) lmdb' ./...	
+	
+test:
+	$(GO) test --race -tags '$(GO_BUILD_TAGS)' ./...
+
+test_lmdb:
+	$(GO) test --race -tags '$(GO_BUILD_TAGS) lmdb' ./...	
+
+test_ledis:
+	$(GO) test --race -tags '$(GO_BUILD_TAGS)' ./ledis
+
+test_server:
+	$(GO) test --race -tags '$(GO_BUILD_TAGS)' ./server
+
+test_store:
+	$(GO) test --race -tags '$(GO_BUILD_TAGS)' ./store
+
+test_rpl:
+	$(GO) test --race -tags '$(GO_BUILD_TAGS)' ./rpl
 
 clean:
 	$(GO) clean -i ./...
 
-test:
-	$(GO) test -tags '$(GO_BUILD_TAGS)' ./...
-
-test_race:
-	$(GO) test -race -tags '$(GO_BUILD_TAGS)' ./...
+fmt:
+	go fmt ./...

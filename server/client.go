@@ -2,39 +2,38 @@ package server
 
 import (
 	"bytes"
-	"fmt"
+	//	"fmt"
 	"github.com/siddontang/go/sync2"
 	"github.com/siddontang/ledisdb/ledis"
 	"io"
-	"sync"
 	"time"
 )
 
-var txUnsupportedCmds = map[string]struct{}{
-	"select":     struct{}{},
-	"slaveof":    struct{}{},
-	"fullsync":   struct{}{},
-	"sync":       struct{}{},
-	"begin":      struct{}{},
-	"flushall":   struct{}{},
-	"flushdb":    struct{}{},
-	"eval":       struct{}{},
-	"xmigrate":   struct{}{},
-	"xmigratedb": struct{}{},
-}
+// var txUnsupportedCmds = map[string]struct{}{
+// 	"select":     struct{}{},
+// 	"slaveof":    struct{}{},
+// 	"fullsync":   struct{}{},
+// 	"sync":       struct{}{},
+// 	"begin":      struct{}{},
+// 	"flushall":   struct{}{},
+// 	"flushdb":    struct{}{},
+// 	"eval":       struct{}{},
+// 	"xmigrate":   struct{}{},
+// 	"xmigratedb": struct{}{},
+// }
 
-var scriptUnsupportedCmds = map[string]struct{}{
-	"slaveof":    struct{}{},
-	"fullsync":   struct{}{},
-	"sync":       struct{}{},
-	"begin":      struct{}{},
-	"commit":     struct{}{},
-	"rollback":   struct{}{},
-	"flushall":   struct{}{},
-	"flushdb":    struct{}{},
-	"xmigrate":   struct{}{},
-	"xmigratedb": struct{}{},
-}
+// var scriptUnsupportedCmds = map[string]struct{}{
+// 	"slaveof":    struct{}{},
+// 	"fullsync":   struct{}{},
+// 	"sync":       struct{}{},
+// 	"begin":      struct{}{},
+// 	"commit":     struct{}{},
+// 	"rollback":   struct{}{},
+// 	"flushall":   struct{}{},
+// 	"flushdb":    struct{}{},
+// 	"xmigrate":   struct{}{},
+// 	"xmigratedb": struct{}{},
+// }
 
 type responseWriter interface {
 	writeError(error)
@@ -74,18 +73,11 @@ type client struct {
 
 	buf bytes.Buffer
 
-	tx *ledis.Tx
+	// tx *ledis.Tx
 
-	script *ledis.Multi
+	// script *ledis.Multi
 
 	slaveListeningAddr string
-
-	quit chan struct{}
-	done chan error
-
-	wg sync.WaitGroup
-
-	fc chan CommandFunc
 }
 
 func newClient(app *App) *client {
@@ -95,35 +87,11 @@ func newClient(app *App) *client {
 	c.ldb = app.ldb
 	c.db, _ = app.ldb.Select(0) //use default db
 
-	// c.reqErr = make(chan error)
-
-	c.quit = make(chan struct{})
-	c.done = make(chan error, 1)
-	c.fc = make(chan CommandFunc, 1)
-
-	c.wg.Add(1)
-	go c.run()
-
 	return c
 }
 
 func (c *client) close() {
-	close(c.quit)
 
-	c.wg.Wait()
-}
-
-func (c *client) run() {
-	defer c.wg.Done()
-
-	for {
-		select {
-		case <-c.quit:
-			return
-		case f := <-c.fc:
-			c.done <- f(c)
-		}
-	}
 }
 
 func (c *client) perform() {
@@ -136,26 +104,22 @@ func (c *client) perform() {
 	} else if exeCmd, ok := regCmds[c.cmd]; !ok {
 		err = ErrNotFound
 	} else {
-		if c.db.IsTransaction() {
-			if _, ok := txUnsupportedCmds[c.cmd]; ok {
-				err = fmt.Errorf("%s not supported in transaction", c.cmd)
-			}
-		} else if c.db.IsInMulti() {
-			if _, ok := scriptUnsupportedCmds[c.cmd]; ok {
-				err = fmt.Errorf("%s not supported in multi", c.cmd)
-			}
-		}
+		// if c.db.IsTransaction() {
+		// 	if _, ok := txUnsupportedCmds[c.cmd]; ok {
+		// 		err = fmt.Errorf("%s not supported in transaction", c.cmd)
+		// 	}
+		// } else if c.db.IsInMulti() {
+		// 	if _, ok := scriptUnsupportedCmds[c.cmd]; ok {
+		// 		err = fmt.Errorf("%s not supported in multi", c.cmd)
+		// 	}
+		// }
 
-		if err == nil {
-			// go func() {
-			// 	c.reqErr <- exeCmd(c)
-			// }()
+		// if err == nil {
+		// 	err = exeCmd(c)
+		// }
 
-			// err = <-c.reqErr
-			c.fc <- exeCmd
+		err = exeCmd(c)
 
-			err = <-c.done
-		}
 	}
 
 	if c.app.access != nil {

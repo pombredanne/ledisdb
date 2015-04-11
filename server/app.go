@@ -1,7 +1,7 @@
 package server
 
 import (
-	goledis "github.com/siddontang/ledisdb/client/go/ledis"
+	"github.com/siddontang/goredis"
 	"github.com/siddontang/ledisdb/config"
 	"github.com/siddontang/ledisdb/ledis"
 	"net"
@@ -30,7 +30,7 @@ type App struct {
 
 	info *info
 
-	s *script
+	script *script
 
 	// handle slaves
 	slock        sync.Mutex
@@ -44,8 +44,9 @@ type App struct {
 	rcm sync.Mutex
 	rcs map[*respClient]struct{}
 
-	migrateM       sync.Mutex
-	migrateClients map[string]*goledis.Client
+	migrateM          sync.Mutex
+	migrateClients    map[string]*goredis.Client
+	migrateKeyLockers map[string]*migrateKeyLocker
 }
 
 func netType(s string) string {
@@ -75,7 +76,8 @@ func NewApp(cfg *config.Config) (*App, error) {
 
 	app.rcs = make(map[*respClient]struct{})
 
-	app.migrateClients = make(map[string]*goledis.Client)
+	app.migrateClients = make(map[string]*goredis.Client)
+	app.newMigrateKeyLockers()
 
 	var err error
 
@@ -157,7 +159,9 @@ func (app *App) Close() {
 
 	app.closeScript()
 
+	app.m.Lock()
 	app.m.Close()
+	app.m.Unlock()
 
 	app.snap.Close()
 
